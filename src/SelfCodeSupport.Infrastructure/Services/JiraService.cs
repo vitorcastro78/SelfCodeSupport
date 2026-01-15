@@ -19,6 +19,12 @@ public class JiraService : IJiraService
     private readonly JiraSettings _settings;
     private readonly ILogger<JiraService> _logger;
     private readonly JsonSerializerOptions _jsonOptions;
+    
+    // Cache e semáforos para evitar chamadas duplicadas simultâneas
+    private static readonly Dictionary<string, (JiraTicket Ticket, DateTime CachedAt)> _ticketCache = new();
+    private static readonly Dictionary<string, SemaphoreSlim> _ticketSemaphores = new();
+    private static readonly object _cacheLock = new();
+    private static readonly TimeSpan TicketCacheDuration = TimeSpan.FromMinutes(5); // Cache por 5 minutos
 
     public JiraService(
         HttpClient httpClient,
@@ -58,21 +64,81 @@ public class JiraService : IJiraService
     {
         _logger.LogInformation("Fetching ticket {TicketId} from JIRA", ticketId);
 
+        // Verificar cache primeiro (read-only, sem lock)
+        lock (_cacheLock)
+        {
+            if (_ticketCache.TryGetValue(ticketId, out var cached) && 
+                DateTime.UtcNow - cached.CachedAt < TicketCacheDuration)
+            {
+                _logger.LogDebug("Returning cached ticket {TicketId}", ticketId);
+                return cached.Ticket;
+            }
+        }
+
+        // Obter ou criar semáforo para este ticket específico
+        SemaphoreSlim semaphore;
+        lock (_cacheLock)
+        {
+            if (!_ticketSemaphores.TryGetValue(ticketId, out semaphore))
+            {
+                semaphore = new SemaphoreSlim(1, 1);
+                _ticketSemaphores[ticketId] = semaphore;
+            }
+        }
+
+        // Aguardar semáforo para garantir que apenas uma requisição busque o ticket por vez
+        await semaphore.WaitAsync(cancellationToken);
         try
         {
+            // Verificar cache novamente após adquirir o lock (outra requisição pode ter atualizado)
+            lock (_cacheLock)
+            {
+                if (_ticketCache.TryGetValue(ticketId, out var cached) && 
+                    DateTime.UtcNow - cached.CachedAt < TicketCacheDuration)
+                {
+                    _logger.LogDebug("Returning cached ticket {TicketId} (after lock)", ticketId);
+                    return cached.Ticket;
+                }
+            }
+
+            // Cache expirado ou não existe - buscar do JIRA
+            _logger.LogInformation("Fetching ticket {TicketId} from JIRA (cache expired or missing)", ticketId);
+
             // Solicitar todos os campos necessários incluindo attachments e comments
             var fields = "summary,description,issuetype,priority,status,assignee,reporter,created,updated,labels,components,attachment,comment";
             var response = await _httpClient.GetAsync(
                 $"issue/{ticketId}?expand=changelog,renderedFields&fields={fields}",
                 cancellationToken);
 
-            if (response.StatusCode == System.Net.HttpStatusCode.Gone || response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            // 401 significa que as credenciais estão incorretas ou expiradas
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
-                // Tentar com API v2 como fallback
-                _logger.LogWarning("API version {Version} returned {StatusCode} for ticket {TicketId}, trying API v2 as fallback", 
-                    _settings.ApiVersion, response.StatusCode, ticketId);
+                _logger.LogError("Unauthorized access to JIRA. Please check your API credentials (email and API token)");
+                throw new UnauthorizedAccessException("JIRA authentication failed. Please check your API credentials (email and API token)");
+            }
+
+            // 404 significa que o ticket não existe, não tentar fallback
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                _logger.LogWarning("Ticket {TicketId} not found in JIRA", ticketId);
+                throw new InvalidOperationException($"Ticket {ticketId} not found in JIRA");
+            }
+
+            // 410 (Gone) pode indicar que a API v3 não está disponível, tentar fallback
+            if (response.StatusCode == System.Net.HttpStatusCode.Gone)
+            {
+                _logger.LogWarning("API version {Version} returned 410 (Gone) for ticket {TicketId}, trying API v2 as fallback", 
+                    _settings.ApiVersion, ticketId);
                 
-                return await GetTicketWithFallbackAsync(ticketId, cancellationToken);
+                var fallbackTicket = await GetTicketWithFallbackAsync(ticketId, cancellationToken);
+                
+                // Salvar no cache após fallback
+                lock (_cacheLock)
+                {
+                    _ticketCache[ticketId] = (fallbackTicket, DateTime.UtcNow);
+                }
+                
+                return fallbackTicket;
             }
 
             response.EnsureSuccessStatusCode();
@@ -83,18 +149,48 @@ public class JiraService : IJiraService
             if (jiraIssue == null)
                 throw new InvalidOperationException($"Could not deserialize ticket {ticketId}");
 
-            return MapToJiraTicket(jiraIssue);
+            var ticket = MapToJiraTicket(jiraIssue);
+            
+            // Salvar no cache
+            lock (_cacheLock)
+            {
+                _ticketCache[ticketId] = (ticket, DateTime.UtcNow);
+            }
+            
+            return ticket;
+        }
+        catch (HttpRequestException ex) when (ex.Message.Contains("401") || ex.Message.Contains("Unauthorized"))
+        {
+            _logger.LogError(ex, "Unauthorized access to JIRA for ticket {TicketId}. Please check your API credentials", ticketId);
+            throw new UnauthorizedAccessException("JIRA authentication failed. Please check your API credentials (email and API token)", ex);
         }
         catch (HttpRequestException ex) when (ex.Message.Contains("410") || ex.Message.Contains("Gone"))
         {
             _logger.LogWarning(ex, "API version {Version} not available for ticket {TicketId}, trying API v2 as fallback", 
                 _settings.ApiVersion, ticketId);
-            return await GetTicketWithFallbackAsync(ticketId, cancellationToken);
+            var fallbackTicket = await GetTicketWithFallbackAsync(ticketId, cancellationToken);
+            
+            // Salvar no cache após fallback
+            lock (_cacheLock)
+            {
+                _ticketCache[ticketId] = (fallbackTicket, DateTime.UtcNow);
+            }
+            
+            return fallbackTicket;
+        }
+        catch (HttpRequestException ex) when (ex.Message.Contains("404") || ex.Message.Contains("Not Found"))
+        {
+            _logger.LogWarning(ex, "Ticket {TicketId} not found in JIRA", ticketId);
+            throw new InvalidOperationException($"Ticket {ticketId} not found in JIRA", ex);
         }
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "Error fetching ticket {TicketId} from JIRA", ticketId);
             throw new InvalidOperationException($"Error fetching ticket {ticketId}: {ex.Message}", ex);
+        }
+        finally
+        {
+            semaphore.Release();
         }
     }
 
@@ -116,6 +212,21 @@ public class JiraService : IJiraService
             $"issue/{ticketId}?expand=changelog,renderedFields&fields={fields}",
             cancellationToken);
 
+        // 401 significa que as credenciais estão incorretas ou expiradas
+        if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            _logger.LogError("Unauthorized access to JIRA (API v2). Please check your API credentials (email and API token)");
+            throw new UnauthorizedAccessException("JIRA authentication failed. Please check your API credentials (email and API token)");
+        }
+
+        // Se o fallback também retornar 404, o ticket realmente não existe
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            _logger.LogWarning("Ticket {TicketId} not found in JIRA (checked both API v2 and v{Version})", 
+                ticketId, _settings.ApiVersion);
+            throw new InvalidOperationException($"Ticket {ticketId} not found in JIRA");
+        }
+
         response.EnsureSuccessStatusCode();
 
         var content = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -124,6 +235,7 @@ public class JiraService : IJiraService
         if (jiraIssue == null)
             throw new InvalidOperationException($"Could not deserialize ticket {ticketId}");
 
+        _logger.LogInformation("Successfully fetched ticket {TicketId} using API v2 fallback", ticketId);
         return MapToJiraTicket(jiraIssue);
     }
 
@@ -143,7 +255,14 @@ public class JiraService : IJiraService
 
         try
         {
-            var response = await _httpClient.PostAsync("search", httpContent, cancellationToken);
+        var response = await _httpClient.PostAsync("search", httpContent, cancellationToken);
+            
+            // 401 significa que as credenciais estão incorretas ou expiradas
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                _logger.LogError("Unauthorized access to JIRA. Please check your API credentials (email and API token)");
+                throw new UnauthorizedAccessException("JIRA authentication failed. Please check your API credentials (email and API token)");
+            }
             
             if (response.StatusCode == System.Net.HttpStatusCode.Gone || response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
@@ -160,6 +279,11 @@ public class JiraService : IJiraService
             var searchResult = JsonSerializer.Deserialize<JiraSearchResponse>(content, _jsonOptions);
 
             return searchResult?.Issues?.Select(MapToJiraTicket) ?? Enumerable.Empty<JiraTicket>();
+        }
+        catch (HttpRequestException ex) when (ex.Message.Contains("401") || ex.Message.Contains("Unauthorized"))
+        {
+            _logger.LogError(ex, "Unauthorized access to JIRA. Please check your API credentials");
+            throw new UnauthorizedAccessException("JIRA authentication failed. Please check your API credentials (email and API token)", ex);
         }
         catch (HttpRequestException ex) when (ex.Message.Contains("410") || ex.Message.Contains("Gone"))
         {
@@ -192,6 +316,14 @@ public class JiraService : IJiraService
         var httpContent = new StringContent(json, Encoding.UTF8, "application/json");
 
         var response = await fallbackClient.PostAsync("search", httpContent, cancellationToken);
+        
+        // 401 significa que as credenciais estão incorretas ou expiradas
+        if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            _logger.LogError("Unauthorized access to JIRA (API v2). Please check your API credentials (email and API token)");
+            throw new UnauthorizedAccessException("JIRA authentication failed. Please check your API credentials (email and API token)");
+        }
+        
         response.EnsureSuccessStatusCode();
 
         var content = await response.Content.ReadAsStringAsync(cancellationToken);

@@ -110,16 +110,27 @@ public partial class GitService : IGitService, IDisposable
 
         await Task.Run(() =>
         {
-            var signature = GetSignature();
-            var options = new PullOptions
+            try
             {
-                FetchOptions = new FetchOptions
+                var signature = GetSignature();
+                var options = new PullOptions
                 {
-                    CredentialsProvider = GetCredentialsHandler()
-                }
-            };
+                    FetchOptions = new FetchOptions
+                    {
+                        CredentialsProvider = GetCredentialsHandler(),
+                        TagFetchMode = TagFetchMode.None
+                    }
+                };
 
-            Commands.Pull(_repository!, signature, options);
+                Commands.Pull(_repository!, signature, options);
+            }
+            catch (LibGit2SharpException ex) when (ex.Message.Contains("too many redirects") || ex.Message.Contains("authentication replays"))
+            {
+                _logger.LogWarning(ex, "Authentication error during pull. This may indicate expired or invalid credentials.");
+                throw new InvalidOperationException(
+                    "Erro de autenticação Git. Verifique se o Personal Access Token está válido e tem as permissões necessárias. " +
+                    "Para gerar um novo token: https://github.com/settings/tokens", ex);
+            }
         }, cancellationToken);
 
         _logger.LogInformation("Repository updated successfully");
@@ -476,11 +487,24 @@ public partial class GitService : IGitService, IDisposable
     {
         return (url, usernameFromUrl, types) =>
         {
-            // Para autenticação HTTPS com token
+            // Para autenticação HTTPS com token do GitHub
+            // O username pode ser qualquer coisa, mas geralmente é o username do GitHub
+            // O password é o Personal Access Token
+            var username = _settings.Credentials.Username;
+            var token = _settings.Credentials.PersonalAccessToken;
+            
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                _logger.LogError("Personal Access Token não configurado");
+                throw new InvalidOperationException("Personal Access Token não configurado. Configure em appsettings.json -> Git -> Credentials -> PersonalAccessToken");
+            }
+            
+            _logger.LogDebug("Using Git credentials for {Url} with username {Username}", url, username);
+            
             return new UsernamePasswordCredentials
             {
-                Username = _settings.Credentials.Username,
-                Password = _settings.Credentials.PersonalAccessToken
+                Username = username,
+                Password = token
             };
         };
     }

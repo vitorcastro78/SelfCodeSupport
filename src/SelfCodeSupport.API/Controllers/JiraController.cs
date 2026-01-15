@@ -75,7 +75,16 @@ public class JiraController : ControllerBase
 
             return Ok(response);
         }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("404") || ex.Message.Contains("não encontrado"))
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogWarning(ex, "Erro de autenticação ao buscar ticket {TicketId}", ticketId);
+            return StatusCode(401, new ProblemDetails
+            {
+                Title = "Erro de autenticação",
+                Detail = "Credenciais do JIRA inválidas ou expiradas. Verifique o email e o API token nas configurações."
+            });
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("404") || ex.Message.Contains("não encontrado") || ex.Message.Contains("not found"))
         {
             return NotFound(new ProblemDetails
             {
@@ -192,12 +201,73 @@ public class JiraController : ControllerBase
 
             return Ok(response);
         }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogWarning(ex, "Erro de autenticação ao buscar tickets do projeto {ProjectKey}", projectKey);
+            return StatusCode(401, new ProblemDetails
+            {
+                Title = "Erro de autenticação",
+                Detail = "Credenciais do JIRA inválidas ou expiradas. Verifique o email e o API token nas configurações."
+            });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erro ao buscar tickets do projeto {ProjectKey}", projectKey);
             return StatusCode(500, new ProblemDetails
             {
                 Title = "Erro ao buscar tickets",
+                Detail = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Endpoint de diagnóstico para testar autenticação JIRA
+    /// </summary>
+    [HttpGet("test-auth")]
+    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult> TestAuth(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var isHealthy = await _jiraService.TestConnectionAsync(cancellationToken);
+            
+            if (isHealthy)
+            {
+                return Ok(new
+                {
+                    status = "success",
+                    message = "Autenticação JIRA bem-sucedida",
+                    timestamp = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                return StatusCode(401, new ProblemDetails
+                {
+                    Title = "Falha na autenticação",
+                    Detail = "Não foi possível autenticar com o JIRA. Verifique o email e o API token nas configurações.",
+                    Status = 401
+                });
+            }
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            _logger.LogError(ex, "Erro de autenticação ao testar conexão com JIRA");
+            return StatusCode(401, new ProblemDetails
+            {
+                Title = "Erro de autenticação",
+                Detail = "Credenciais do JIRA inválidas ou expiradas. Verifique o email e o API token nas configurações. Para gerar um novo token, acesse: https://id.atlassian.com/manage-profile/security/api-tokens",
+                Status = 401
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao testar autenticação com JIRA");
+            return StatusCode(500, new ProblemDetails
+            {
+                Title = "Erro ao testar autenticação",
                 Detail = ex.Message
             });
         }

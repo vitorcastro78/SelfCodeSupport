@@ -285,9 +285,9 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             try
             {
                 // Atualizar branch padrão
-                await _gitService.PullAsync(cancellationToken);
-                await _gitService.CheckoutAsync(_gitSettings.DefaultBranch, cancellationToken);
-            
+        await _gitService.PullAsync(cancellationToken);
+        await _gitService.CheckoutAsync(_gitSettings.DefaultBranch, cancellationToken);
+
                 // Criar branch temporário para análise (se não existir)
                 var branches = _gitService.ListBranches();
                 if (!branches.Contains(analysisBranchName))
@@ -318,7 +318,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             _logger.LogInformation("Context optimized: {OriginalSize} -> {OptimizedSize} characters", 
                 codeContext.Length, optimizedContext.Length);
 
-            // 4. Analisar com Claude
+        // 4. Analisar com Claude
             UpdateProgress(ticketId, WorkflowPhase.AnalyzingCode, 50, "Analyzing code with AI...");
             var analysis = await _anthropicService.AnalyzeTicketAsync(ticket, optimizedContext, cancellationToken);
 
@@ -328,7 +328,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             await analysisCache3.CacheAnalysisAsync(ticketId, ticketHash, analysis);
 
             // 5. Armazenar análise pendente (não envia para JIRA automaticamente)
-            _pendingAnalyses[ticketId] = analysis;
+        _pendingAnalyses[ticketId] = analysis;
 
             UpdateProgress(ticketId, WorkflowPhase.WaitingApproval, 100, "Analysis completed. Awaiting approval.");
 
@@ -351,9 +351,9 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 _logger.LogWarning(ex, "Error restoring original branch");
             }
 
-            OnAnalysisCompleted(ticketId, analysis);
+        OnAnalysisCompleted(ticketId, analysis);
 
-            return analysis;
+        return analysis;
         }
         finally
         {
@@ -662,18 +662,18 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
 
         // Fallback: criar status básico
         if (status == null)
-        {
-            var state = _workflowStates.GetValueOrDefault(ticketId, WorkflowState.Completed);
-            var result = _workflowResults.GetValueOrDefault(ticketId);
+    {
+        var state = _workflowStates.GetValueOrDefault(ticketId, WorkflowState.Completed);
+        var result = _workflowResults.GetValueOrDefault(ticketId);
 
             status = new WorkflowStatus
-            {
-                TicketId = ticketId,
-                CurrentPhase = result?.FinalPhase ?? WorkflowPhase.NotStarted,
-                State = state,
+        {
+            TicketId = ticketId,
+            CurrentPhase = result?.FinalPhase ?? WorkflowPhase.NotStarted,
+            State = state,
                 ProgressPercentage = state == WorkflowState.Completed ? 100 : 0,
                 Message = state == WorkflowState.Completed ? "Completed" : "Not started",
-                LastUpdated = DateTime.UtcNow
+            LastUpdated = DateTime.UtcNow
             };
         }
 
@@ -881,8 +881,8 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
             .Select(async term =>
             {
                 try
-                {
-                    var results = await _gitService.SearchInFilesAsync(term, "*.cs", cancellationToken);
+        {
+            var results = await _gitService.SearchInFilesAsync(term, "*.cs", cancellationToken);
                     return results
                         .Where(r => !ShouldIgnoreFile(r.FilePath) && !processedFiles.Contains(r.FilePath))
                         .Take(maxFilesPerTerm)
@@ -912,7 +912,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
 
                 processedFiles.Add(result.FilePath);
 
-                var content = await _gitService.GetFileContentAsync(result.FilePath, cancellationToken);
+                    var content = await _gitService.GetFileContentAsync(result.FilePath, cancellationToken);
                 
                 // Limitar tamanho do arquivo
                 if (content.Length > maxFileSize)
@@ -955,7 +955,7 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
                 .Select(async component =>
                 {
                     try
-                    {
+        {
                         var files = _gitService.ListFiles(pattern: $"*{component}*.cs")
                             .Where(f => !ShouldIgnoreFile(f) && !processedFiles.Contains(f))
                             .Take(2)
@@ -963,12 +963,12 @@ public class WorkflowOrchestrator : IWorkflowOrchestrator
 
                         var fileContents = new List<(string Path, string Content)>();
                         foreach (var file in files)
-                        {
+            {
                             if (processedFiles.Contains(file) || sb.Length >= maxContextSize)
                                 break;
 
                             processedFiles.Add(file);
-                            var content = await _gitService.GetFileContentAsync(file, cancellationToken);
+                    var content = await _gitService.GetFileContentAsync(file, cancellationToken);
                             
                             if (content.Length > maxFileSize)
                             {

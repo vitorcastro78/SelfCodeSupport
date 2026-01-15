@@ -20,7 +20,7 @@ public class HealthController : ControllerBase
     private static DetailedHealthResponse? _cachedHealthResponse;
     private static DateTime _lastHealthCheck = DateTime.MinValue;
     private static readonly TimeSpan HealthCheckCacheDuration = TimeSpan.FromSeconds(60); // Cache por 60 segundos
-    private static readonly object _healthCheckLock = new();
+    private static readonly SemaphoreSlim _healthCheckSemaphore = new(1, 1); // Permite apenas 1 requisição por vez
 
     public HealthController(
         IJiraService jiraService,
@@ -57,95 +57,108 @@ public class HealthController : ControllerBase
     [ProducesResponseType(typeof(DetailedHealthResponse), StatusCodes.Status200OK)]
     public async Task<ActionResult<DetailedHealthResponse>> GetDetailedHealth(CancellationToken cancellationToken)
     {
-        // Verificar se há cache válido
-        lock (_healthCheckLock)
+        // Verificar cache sem lock primeiro (read-only check rápido)
+        if (_cachedHealthResponse != null && 
+            DateTime.UtcNow - _lastHealthCheck < HealthCheckCacheDuration)
         {
+            _logger.LogDebug("Returning cached health check result");
+            return Ok(_cachedHealthResponse);
+        }
+
+        // Aguardar semáforo para garantir que apenas uma requisição faça o health check por vez
+        await _healthCheckSemaphore.WaitAsync(cancellationToken);
+        try
+        {
+            // Verificar cache novamente após adquirir o lock (outra requisição pode ter atualizado)
             if (_cachedHealthResponse != null && 
                 DateTime.UtcNow - _lastHealthCheck < HealthCheckCacheDuration)
             {
-                _logger.LogDebug("Returning cached health check result");
+                _logger.LogDebug("Returning cached health check result (after lock)");
                 return Ok(_cachedHealthResponse);
             }
-        }
 
-        // Cache expirado ou não existe - fazer verificação real
-        var response = new DetailedHealthResponse
-        {
-            Timestamp = DateTime.UtcNow,
-            Version = GetType().Assembly.GetName().Version?.ToString() ?? "1.0.0"
-        };
+            // Cache expirado ou não existe - fazer verificação real
+            _logger.LogInformation("Performing health check (cache expired or missing)");
+            
+            var response = new DetailedHealthResponse
+            {
+                Timestamp = DateTime.UtcNow,
+                Version = GetType().Assembly.GetName().Version?.ToString() ?? "1.0.0"
+            };
 
-        // Verificar JIRA
-        try
-        {
-            response.Integrations["Jira"] = new IntegrationHealth
+            // Verificar JIRA
+            try
             {
-                IsHealthy = await _jiraService.TestConnectionAsync(cancellationToken),
-                Message = "Conexão verificada"
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Erro ao verificar conexão com JIRA");
-            response.Integrations["Jira"] = new IntegrationHealth
+                response.Integrations["Jira"] = new IntegrationHealth
+                {
+                    IsHealthy = await _jiraService.TestConnectionAsync(cancellationToken),
+                    Message = "Conexão verificada"
+                };
+            }
+            catch (Exception ex)
             {
-                IsHealthy = false,
-                Message = ex.Message
-            };
-        }
+                _logger.LogWarning(ex, "Erro ao verificar conexão com JIRA");
+                response.Integrations["Jira"] = new IntegrationHealth
+                {
+                    IsHealthy = false,
+                    Message = ex.Message
+                };
+            }
 
-        // Verificar Anthropic (mais caro - só verifica se necessário)
-        try
-        {
-            response.Integrations["Anthropic"] = new IntegrationHealth
+            // Verificar Anthropic (mais caro - só verifica se necessário)
+            try
             {
-                IsHealthy = await _anthropicService.TestConnectionAsync(cancellationToken),
-                Message = "Conexão verificada"
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Erro ao verificar conexão com Anthropic");
-            response.Integrations["Anthropic"] = new IntegrationHealth
+                response.Integrations["Anthropic"] = new IntegrationHealth
+                {
+                    IsHealthy = await _anthropicService.TestConnectionAsync(cancellationToken),
+                    Message = "Conexão verificada"
+                };
+            }
+            catch (Exception ex)
             {
-                IsHealthy = false,
-                Message = ex.Message
-            };
-        }
+                _logger.LogWarning(ex, "Erro ao verificar conexão com Anthropic");
+                response.Integrations["Anthropic"] = new IntegrationHealth
+                {
+                    IsHealthy = false,
+                    Message = ex.Message
+                };
+            }
 
-        // Verificar GitHub
-        try
-        {
-            response.Integrations["GitHub"] = new IntegrationHealth
+            // Verificar GitHub
+            try
             {
-                IsHealthy = await _pullRequestService.TestConnectionAsync(cancellationToken),
-                Message = "Conexão verificada"
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Erro ao verificar conexão com GitHub");
-            response.Integrations["GitHub"] = new IntegrationHealth
+                response.Integrations["GitHub"] = new IntegrationHealth
+                {
+                    IsHealthy = await _pullRequestService.TestConnectionAsync(cancellationToken),
+                    Message = "Conexão verificada"
+                };
+            }
+            catch (Exception ex)
             {
-                IsHealthy = false,
-                Message = ex.Message
-            };
-        }
+                _logger.LogWarning(ex, "Erro ao verificar conexão com GitHub");
+                response.Integrations["GitHub"] = new IntegrationHealth
+                {
+                    IsHealthy = false,
+                    Message = ex.Message
+                };
+            }
 
-        response.Status = response.Integrations.Values.All(i => i.IsHealthy) 
-            ? "Healthy" 
-            : response.Integrations.Values.Any(i => i.IsHealthy) 
-                ? "Degraded" 
-                : "Unhealthy";
+            response.Status = response.Integrations.Values.All(i => i.IsHealthy) 
+                ? "Healthy" 
+                : response.Integrations.Values.Any(i => i.IsHealthy) 
+                    ? "Degraded" 
+                    : "Unhealthy";
 
-        // Atualizar cache
-        lock (_healthCheckLock)
-        {
+            // Atualizar cache
             _cachedHealthResponse = response;
             _lastHealthCheck = DateTime.UtcNow;
-        }
 
-        return Ok(response);
+            return Ok(response);
+        }
+        finally
+        {
+            _healthCheckSemaphore.Release();
+        }
     }
 }
 
