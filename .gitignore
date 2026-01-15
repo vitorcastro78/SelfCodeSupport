@@ -95,3 +95,5 @@ secrets.json
 
 # JetBrains Rider
 *.sln.iml
+/src/SelfCodeSupport.API/appsettings.Development.json
+/src/SelfCodeSupport.API/appsettings.json
