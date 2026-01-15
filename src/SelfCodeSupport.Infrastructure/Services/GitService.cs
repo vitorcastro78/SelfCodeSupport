@@ -18,6 +18,7 @@ public partial class GitService : IGitService, IDisposable
     private readonly ILogger<GitService> _logger;
     private Repository? _repository;
     private bool _disposed;
+    private string? _currentRepositoryPath;
 
     public GitService(
         IOptions<GitSettings> settings,
@@ -34,16 +35,45 @@ public partial class GitService : IGitService, IDisposable
 
     private void InitializeRepository()
     {
+        InitializeRepository(_settings.RepositoryPath);
+    }
+
+    private void InitializeRepository(string repositoryPath)
+    {
         try
         {
-            _repository = new Repository(_settings.RepositoryPath);
-            _logger.LogInformation("Repositório inicializado: {Path}", _settings.RepositoryPath);
+            // Dispose do repositório anterior se existir
+            _repository?.Dispose();
+            
+            _repository = new Repository(repositoryPath);
+            _currentRepositoryPath = repositoryPath;
+            _settings.RepositoryPath = repositoryPath;
+            _logger.LogInformation("Repository initialized: {Path}", repositoryPath);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Erro ao inicializar repositório em {Path}", _settings.RepositoryPath);
+            _logger.LogError(ex, "Error initializing repository at {Path}", repositoryPath);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Muda o repositório ativo (útil para workspaces temporários)
+    /// </summary>
+    public void SwitchRepository(string repositoryPath)
+    {
+        if (string.IsNullOrEmpty(repositoryPath) || !Directory.Exists(repositoryPath))
+        {
+            throw new DirectoryNotFoundException($"Repository path not found: {repositoryPath}");
+        }
+
+        if (_currentRepositoryPath == repositoryPath)
+        {
+            _logger.LogDebug("Repositório já está ativo: {Path}", repositoryPath);
+            return;
+        }
+
+        InitializeRepository(repositoryPath);
     }
 
     private void EnsureRepository()
@@ -57,7 +87,7 @@ public partial class GitService : IGitService, IDisposable
 
     public async Task CloneRepositoryAsync(string url, string localPath, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Clonando repositório de {Url} para {Path}", url, localPath);
+        _logger.LogInformation("Cloning repository from {Url} to {Path}", url, localPath);
 
         await Task.Run(() =>
         {
@@ -70,13 +100,13 @@ public partial class GitService : IGitService, IDisposable
         _settings.RepositoryPath = localPath;
         InitializeRepository();
 
-        _logger.LogInformation("Repositório clonado com sucesso");
+        _logger.LogInformation("Repository cloned successfully");
     }
 
     public async Task PullAsync(CancellationToken cancellationToken = default)
     {
         EnsureRepository();
-        _logger.LogInformation("Atualizando repositório (pull)");
+        _logger.LogInformation("Updating repository (pull)");
 
         await Task.Run(() =>
         {
@@ -92,13 +122,13 @@ public partial class GitService : IGitService, IDisposable
             Commands.Pull(_repository!, signature, options);
         }, cancellationToken);
 
-        _logger.LogInformation("Repositório atualizado com sucesso");
+        _logger.LogInformation("Repository updated successfully");
     }
 
     public async Task CreateBranchAsync(string branchName, string? baseBranch = null, CancellationToken cancellationToken = default)
     {
         EnsureRepository();
-        _logger.LogInformation("Criando branch {BranchName} a partir de {BaseBranch}", 
+        _logger.LogInformation("Creating branch {BranchName} from {BaseBranch}", 
             branchName, baseBranch ?? _settings.DefaultBranch);
 
         await Task.Run(() =>
@@ -110,7 +140,7 @@ public partial class GitService : IGitService, IDisposable
 
             if (baseBranchObj == null)
             {
-                throw new InvalidOperationException($"Branch base '{baseRef}' não encontrada");
+                throw new InvalidOperationException($"Base branch '{baseRef}' not found");
             }
 
             // Criar nova branch
@@ -120,13 +150,13 @@ public partial class GitService : IGitService, IDisposable
             Commands.Checkout(_repository, newBranch);
         }, cancellationToken);
 
-        _logger.LogInformation("Branch {BranchName} criada e ativada", branchName);
+        _logger.LogInformation("Branch {BranchName} created and activated", branchName);
     }
 
     public async Task CheckoutAsync(string branchName, CancellationToken cancellationToken = default)
     {
         EnsureRepository();
-        _logger.LogInformation("Mudando para branch {BranchName}", branchName);
+        _logger.LogInformation("Switching to branch {BranchName}", branchName);
 
         await Task.Run(() =>
         {
@@ -135,13 +165,13 @@ public partial class GitService : IGitService, IDisposable
 
             if (branch == null)
             {
-                throw new InvalidOperationException($"Branch '{branchName}' não encontrada");
+                throw new InvalidOperationException($"Branch '{branchName}' not found");
             }
 
             Commands.Checkout(_repository, branch);
         }, cancellationToken);
 
-        _logger.LogInformation("Checkout para {BranchName} realizado", branchName);
+        _logger.LogInformation("Checkout to {BranchName} completed", branchName);
     }
 
     public async Task StageFilesAsync(IEnumerable<string>? paths = null, CancellationToken cancellationToken = default)
@@ -153,7 +183,7 @@ public partial class GitService : IGitService, IDisposable
             if (paths == null || !paths.Any())
             {
                 Commands.Stage(_repository!, "*");
-                _logger.LogInformation("Todos os arquivos adicionados ao staging");
+                _logger.LogInformation("All files added to staging");
             }
             else
             {
@@ -161,7 +191,7 @@ public partial class GitService : IGitService, IDisposable
                 {
                     Commands.Stage(_repository!, path);
                 }
-                _logger.LogInformation("Arquivos adicionados ao staging: {Count}", paths.Count());
+                _logger.LogInformation("Files added to staging: {Count}", paths.Count());
             }
         }, cancellationToken);
     }
@@ -169,7 +199,7 @@ public partial class GitService : IGitService, IDisposable
     public async Task<CommitInfo> CommitAsync(string message, CancellationToken cancellationToken = default)
     {
         EnsureRepository();
-        _logger.LogInformation("Realizando commit: {Message}", message.Split('\n').First());
+        _logger.LogInformation("Performing commit: {Message}", message.Split('\n').First());
 
         return await Task.Run(() =>
         {
@@ -189,7 +219,7 @@ public partial class GitService : IGitService, IDisposable
     public async Task PushAsync(string branchName, CancellationToken cancellationToken = default)
     {
         EnsureRepository();
-        _logger.LogInformation("Enviando alterações para {Remote}/{Branch}", _settings.RemoteName, branchName);
+        _logger.LogInformation("Pushing changes to {Remote}/{Branch}", _settings.RemoteName, branchName);
 
         await Task.Run(() =>
         {
@@ -202,13 +232,13 @@ public partial class GitService : IGitService, IDisposable
             var localBranch = _repository.Branches[branchName];
             if (localBranch == null)
             {
-                throw new InvalidOperationException($"Branch local '{branchName}' não encontrada");
+                throw new InvalidOperationException($"Local branch '{branchName}' not found");
             }
 
             _repository.Network.Push(localBranch, options);
         }, cancellationToken);
 
-        _logger.LogInformation("Push realizado com sucesso");
+        _logger.LogInformation("Push completed successfully");
     }
 
     public async Task<GitStatus> GetStatusAsync(CancellationToken cancellationToken = default)
@@ -292,23 +322,37 @@ public partial class GitService : IGitService, IDisposable
     {
         EnsureRepository();
 
-        var results = new List<FileSearchResult>();
-        var files = ListFiles(pattern: filePattern ?? "*.cs");
+        const int maxFilesToSearch = 200; // Limitar número de arquivos a buscar
+        const int maxFileSizeBytes = 500000; // ~500KB - ignorar arquivos muito grandes
+        const int maxResultsPerFile = 5; // Limitar resultados por arquivo
 
-        await Task.Run(() =>
+        var files = ListFiles(pattern: filePattern ?? "*.cs")
+            .Take(maxFilesToSearch)
+            .ToList();
+
+        var searchTasks = files.Select(async file =>
         {
-            foreach (var file in files)
+            try
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var fullPath = Path.Combine(_settings.RepositoryPath, file);
-                var lines = File.ReadAllLines(fullPath);
+                
+                // Verificar tamanho do arquivo antes de ler
+                var fileInfo = new FileInfo(fullPath);
+                if (fileInfo.Length > maxFileSizeBytes)
+                {
+                    return new List<FileSearchResult>();
+                }
 
-                for (int i = 0; i < lines.Length; i++)
+                var lines = await File.ReadAllLinesAsync(fullPath, cancellationToken);
+                var fileResults = new List<FileSearchResult>();
+
+                for (int i = 0; i < lines.Length && fileResults.Count < maxResultsPerFile; i++)
                 {
                     if (lines[i].Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
                     {
-                        results.Add(new FileSearchResult
+                        fileResults.Add(new FileSearchResult
                         {
                             FilePath = file,
                             LineNumber = i + 1,
@@ -317,10 +361,18 @@ public partial class GitService : IGitService, IDisposable
                         });
                     }
                 }
-            }
-        }, cancellationToken);
 
-        return results;
+                return fileResults;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Erro ao buscar em arquivo {FilePath}", file);
+                return new List<FileSearchResult>();
+            }
+        });
+
+        var allResults = await Task.WhenAll(searchTasks);
+        return allResults.SelectMany(r => r);
     }
 
     private static string GetContext(string[] lines, int lineIndex, int contextLines)
@@ -409,7 +461,7 @@ public partial class GitService : IGitService, IDisposable
             }
         }, cancellationToken);
 
-        _logger.LogInformation("Todas as alterações locais foram descartadas");
+        _logger.LogInformation("All local changes discarded");
     }
 
     private Signature GetSignature()

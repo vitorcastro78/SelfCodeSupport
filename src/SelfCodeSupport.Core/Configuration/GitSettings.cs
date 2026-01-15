@@ -8,9 +8,20 @@ public class GitSettings
     public const string SectionName = "Git";
 
     /// <summary>
-    /// Caminho do repositório local
+    /// Caminho do repositório local (opcional - se vazio, clona em workspace temporário)
     /// </summary>
     public string RepositoryPath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Usar workspace temporário para cada análise (útil para containers/servidores)
+    /// Se true, clona o repositório em um diretório temporário para cada análise
+    /// </summary>
+    public bool UseTemporaryWorkspace { get; set; } = false;
+
+    /// <summary>
+    /// Caminho base para workspaces temporários (padrão: temp do sistema)
+    /// </summary>
+    public string? TemporaryWorkspaceBasePath { get; set; }
 
     /// <summary>
     /// URL remota do repositório (para clone)

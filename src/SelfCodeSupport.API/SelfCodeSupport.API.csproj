@@ -22,4 +22,9 @@
     <ProjectReference Include="..\SelfCodeSupport.Infrastructure\SelfCodeSupport.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Resolver conflito de versão do Microsoft.CodeAnalysis.Common -->
+    <PackageReference Include="Microsoft.CodeAnalysis.Common" Version="4.8.0" />
+  </ItemGroup>
+
 </Project>

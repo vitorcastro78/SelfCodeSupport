@@ -54,7 +54,7 @@ public class AnthropicService : IAnthropicService
         string codeContext, 
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Analisando ticket {TicketId} com Claude", ticket.Id);
+        _logger.LogInformation("Analyzing ticket {TicketId} with Claude", ticket.Id);
 
         var prompt = _settings.Prompts.AnalysisPromptTemplate
             .Replace("{ticketId}", ticket.Id)
@@ -65,7 +65,7 @@ public class AnthropicService : IAnthropicService
 
         var systemPrompt = _settings.Prompts.SystemPrompt + @"
 
-Responda APENAS com um JSON válido no seguinte formato:
+Respond ONLY with a valid JSON in the following format:
 {
     ""affectedFiles"": [{""path"": ""string"", ""changeType"": ""Create|Modify|Delete"", ""description"": ""string"", ""methodsAffected"": [""string""]}],
     ""requiredChanges"": [{""component"": ""string"", ""description"": ""string"", ""category"": ""Controller|Service|Repository|Model|DTO|Validator|Migration|Configuration|Test|Documentation""}],
@@ -97,12 +97,12 @@ Responda APENAS com um JSON válido no seguinte formato:
                 }
             }
 
-            throw new InvalidOperationException("Não foi possível extrair JSON válido da resposta");
+            throw new InvalidOperationException("Could not extract valid JSON from response");
         }
         catch (JsonException ex)
         {
-            _logger.LogError(ex, "Erro ao deserializar resposta da análise");
-            throw new InvalidOperationException("Erro ao processar resposta da análise", ex);
+            _logger.LogError(ex, "Error deserializing analysis response");
+            throw new InvalidOperationException("Error processing analysis response", ex);
         }
     }
 
@@ -112,7 +112,7 @@ Responda APENAS com um JSON válido no seguinte formato:
         string existingCode, 
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Gerando código com Claude");
+        _logger.LogInformation("Generating code with Claude");
 
         var prompt = _settings.Prompts.CodeGenerationPromptTemplate
             .Replace("{context}", context)
@@ -121,7 +121,7 @@ Responda APENAS com um JSON válido no seguinte formato:
 
         var systemPrompt = _settings.Prompts.SystemPrompt + @"
 
-Responda com um JSON no formato:
+Respond with a JSON in the format:
 {
     ""files"": [{""path"": ""string"", ""content"": ""string"", ""operation"": ""Create|Update|Delete"", ""description"": ""string""}],
     ""explanation"": ""string"",
@@ -129,7 +129,7 @@ Responda com um JSON no formato:
     ""additionalInstructions"": ""string""
 }
 
-O conteúdo dos arquivos deve ser código C# válido e completo.";
+File contents must be valid and complete C# code.";
 
         var response = await SendMessageAsync(prompt, systemPrompt, cancellationToken);
 
@@ -161,27 +161,27 @@ O conteúdo dos arquivos deve ser código C# válido e completo.";
                 }
             }
 
-            throw new InvalidOperationException("Não foi possível extrair código da resposta");
+            throw new InvalidOperationException("Could not extract code from response");
         }
         catch (JsonException ex)
         {
-            _logger.LogError(ex, "Erro ao deserializar código gerado");
-            throw new InvalidOperationException("Erro ao processar código gerado", ex);
+            _logger.LogError(ex, "Error deserializing generated code");
+            throw new InvalidOperationException("Error processing generated code", ex);
         }
     }
 
     public async Task<string> GenerateTestsAsync(string code, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Gerando testes unitários com Claude");
+        _logger.LogInformation("Generating unit tests with Claude");
 
         var prompt = _settings.Prompts.TestGenerationPromptTemplate
             .Replace("{code}", code);
 
         var systemPrompt = _settings.Prompts.SystemPrompt + @"
 
-Gere código de testes C# usando xUnit, Moq e FluentAssertions.
-Retorne APENAS o código dos testes, sem explicações adicionais.
-O código deve ser válido e compilável.";
+Generate C# test code using xUnit, Moq and FluentAssertions.
+Return ONLY the test code, without additional explanations.
+The code must be valid and compilable.";
 
         var response = await SendMessageAsync(prompt, systemPrompt, cancellationToken);
 
@@ -203,14 +203,14 @@ O código deve ser válido e compilável.";
 
     public async Task<CodeReviewResult> ReviewCodeAsync(string code, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Revisando código com Claude");
+        _logger.LogInformation("Reviewing code with Claude");
 
         var prompt = _settings.Prompts.CodeReviewPromptTemplate
             .Replace("{code}", code);
 
         var systemPrompt = _settings.Prompts.SystemPrompt + @"
 
-Responda com um JSON no formato:
+Respond with a JSON in the format:
 {
     ""overallScore"": 0,
     ""issues"": [{""description"": ""string"", ""severity"": ""Info|Low|Medium|High|Critical"", ""category"": ""Bug|Security|Performance|CodeStyle|BestPractice|Documentation|Maintainability"", ""filePath"": ""string"", ""lineNumber"": 0, ""suggestedFix"": ""string""}],
@@ -218,7 +218,7 @@ Responda com um JSON no formato:
     ""summary"": ""string""
 }
 
-O score deve ser de 0 a 100.";
+The score must be from 0 to 100.";
 
         var response = await SendMessageAsync(prompt, systemPrompt, cancellationToken);
 
@@ -252,12 +252,12 @@ O score deve ser de 0 a 100.";
                 }
             }
 
-            throw new InvalidOperationException("Não foi possível extrair revisão da resposta");
+            throw new InvalidOperationException("Could not extract review from response");
         }
         catch (JsonException ex)
         {
-            _logger.LogError(ex, "Erro ao deserializar revisão de código");
-            throw new InvalidOperationException("Erro ao processar revisão", ex);
+            _logger.LogError(ex, "Error deserializing code review");
+            throw new InvalidOperationException("Error processing review", ex);
         }
     }
 
@@ -305,7 +305,7 @@ O score deve ser de 0 a 100.";
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                    _logger.LogError("Erro na API Anthropic: {StatusCode} - {Content}", 
+                    _logger.LogError("Error in Anthropic API: {StatusCode} - {Content}", 
                         response.StatusCode, errorContent);
                     
                     if ((int)response.StatusCode >= 500 || response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
@@ -315,7 +315,7 @@ O score deve ser de 0 a 100.";
                         continue;
                     }
                     
-                    throw new HttpRequestException($"Erro na API: {response.StatusCode} - {errorContent}");
+                    throw new HttpRequestException($"API error: {response.StatusCode} - {errorContent}");
                 }
 
                 var content = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -326,7 +326,7 @@ O score deve ser de 0 a 100.";
             catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 retryCount++;
-                _logger.LogWarning("Timeout na API Anthropic, tentativa {Retry}/{Max}", 
+                _logger.LogWarning("Timeout in Anthropic API, attempt {Retry}/{Max}", 
                     retryCount, _settings.MaxRetries);
                 
                 if (retryCount >= _settings.MaxRetries)
@@ -336,7 +336,7 @@ O score deve ser de 0 a 100.";
             }
         }
 
-        throw new InvalidOperationException("Número máximo de tentativas excedido");
+        throw new InvalidOperationException("Maximum number of retries exceeded");
     }
 
     public async Task<bool> TestConnectionAsync(CancellationToken cancellationToken = default)
@@ -353,7 +353,7 @@ O score deve ser de 0 a 100.";
                 Model = _settings.Model,
                 MaxTokens = 10, // Mínimo para teste
                 Temperature = 0.1,
-                System = "Você é um assistente útil.",
+                System = "You are a helpful assistant.",
                 Messages = new List<AnthropicMessage>
                 {
                     new() { Role = "user", Content = "OK" }
@@ -368,12 +368,12 @@ O score deve ser de 0 a 100.";
         }
         catch (TaskCanceledException)
         {
-            _logger.LogWarning("Timeout ao testar conexão com Anthropic (teste cancelado após 10s)");
+            _logger.LogWarning("Timeout testing connection with Anthropic (test cancelled after 10s)");
             return false;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Erro ao testar conexão com Anthropic");
+            _logger.LogError(ex, "Error testing connection with Anthropic");
             return false;
         }
     }

@@ -42,7 +42,8 @@ public class JiraService : IJiraService
 
     private void ConfigureHttpClient()
     {
-        _httpClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/rest/api/3/");
+        var apiVersion = string.IsNullOrWhiteSpace(_settings.ApiVersion) ? "3" : _settings.ApiVersion;
+        _httpClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + $"/rest/api/{apiVersion}/");
         
         var credentials = Convert.ToBase64String(
             Encoding.ASCII.GetBytes($"{_settings.Email}:{_settings.ApiToken}"));
@@ -55,13 +56,24 @@ public class JiraService : IJiraService
 
     public async Task<JiraTicket> GetTicketAsync(string ticketId, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Obtendo ticket {TicketId} do JIRA", ticketId);
+        _logger.LogInformation("Fetching ticket {TicketId} from JIRA", ticketId);
 
         try
         {
+            // Solicitar todos os campos necessários incluindo attachments e comments
+            var fields = "summary,description,issuetype,priority,status,assignee,reporter,created,updated,labels,components,attachment,comment";
             var response = await _httpClient.GetAsync(
-                $"issue/{ticketId}?expand=changelog,renderedFields",
+                $"issue/{ticketId}?expand=changelog,renderedFields&fields={fields}",
                 cancellationToken);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Gone || response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                // Tentar com API v2 como fallback
+                _logger.LogWarning("API version {Version} returned {StatusCode} for ticket {TicketId}, trying API v2 as fallback", 
+                    _settings.ApiVersion, response.StatusCode, ticketId);
+                
+                return await GetTicketWithFallbackAsync(ticketId, cancellationToken);
+            }
 
             response.EnsureSuccessStatusCode();
 
@@ -69,32 +81,117 @@ public class JiraService : IJiraService
             var jiraIssue = JsonSerializer.Deserialize<JiraIssueResponse>(content, _jsonOptions);
 
             if (jiraIssue == null)
-                throw new InvalidOperationException($"Não foi possível deserializar o ticket {ticketId}");
+                throw new InvalidOperationException($"Could not deserialize ticket {ticketId}");
 
             return MapToJiraTicket(jiraIssue);
         }
+        catch (HttpRequestException ex) when (ex.Message.Contains("410") || ex.Message.Contains("Gone"))
+        {
+            _logger.LogWarning(ex, "API version {Version} not available for ticket {TicketId}, trying API v2 as fallback", 
+                _settings.ApiVersion, ticketId);
+            return await GetTicketWithFallbackAsync(ticketId, cancellationToken);
+        }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Erro ao obter ticket {TicketId} do JIRA", ticketId);
-            throw new InvalidOperationException($"Erro ao obter ticket {ticketId}: {ex.Message}", ex);
+            _logger.LogError(ex, "Error fetching ticket {TicketId} from JIRA", ticketId);
+            throw new InvalidOperationException($"Error fetching ticket {ticketId}: {ex.Message}", ex);
         }
+    }
+
+    private async Task<JiraTicket> GetTicketWithFallbackAsync(string ticketId, CancellationToken cancellationToken)
+    {
+        // Criar um HttpClient temporário com API v2
+        using var fallbackClient = new HttpClient();
+        var credentials = Convert.ToBase64String(
+            Encoding.ASCII.GetBytes($"{_settings.Email}:{_settings.ApiToken}"));
+        
+        fallbackClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/rest/api/2/");
+        fallbackClient.DefaultRequestHeaders.Authorization = 
+            new AuthenticationHeaderValue("Basic", credentials);
+        fallbackClient.DefaultRequestHeaders.Accept.Add(
+            new MediaTypeWithQualityHeaderValue("application/json"));
+
+        var fields = "summary,description,issuetype,priority,status,assignee,reporter,created,updated,labels,components,attachment,comment";
+        var response = await fallbackClient.GetAsync(
+            $"issue/{ticketId}?expand=changelog,renderedFields&fields={fields}",
+            cancellationToken);
+
+        response.EnsureSuccessStatusCode();
+
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
+        var jiraIssue = JsonSerializer.Deserialize<JiraIssueResponse>(content, _jsonOptions);
+
+        if (jiraIssue == null)
+            throw new InvalidOperationException($"Could not deserialize ticket {ticketId}");
+
+        return MapToJiraTicket(jiraIssue);
     }
 
     public async Task<IEnumerable<JiraTicket>> SearchTicketsAsync(string jql, int maxResults = 50, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Buscando tickets com JQL: {JQL}", jql);
+        _logger.LogInformation("Searching tickets with JQL: {JQL}", jql);
 
         var searchRequest = new
         {
             jql,
             maxResults,
-            fields = new[] { "summary", "description", "issuetype", "priority", "status", "assignee", "reporter", "created", "updated", "labels", "components" }
+            fields = new[] { "summary", "description", "issuetype", "priority", "status", "assignee", "reporter", "created", "updated", "labels", "components", "attachment", "comment" }
         };
 
         var json = JsonSerializer.Serialize(searchRequest, _jsonOptions);
         var httpContent = new StringContent(json, Encoding.UTF8, "application/json");
 
-        var response = await _httpClient.PostAsync("search", httpContent, cancellationToken);
+        try
+        {
+            var response = await _httpClient.PostAsync("search", httpContent, cancellationToken);
+            
+            if (response.StatusCode == System.Net.HttpStatusCode.Gone || response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                // Tentar com API v2 como fallback
+                _logger.LogWarning("API version {Version} returned {StatusCode}, trying API v2 as fallback", 
+                    _settings.ApiVersion, response.StatusCode);
+                
+                return await SearchTicketsWithFallbackAsync(jql, maxResults, cancellationToken);
+            }
+            
+            response.EnsureSuccessStatusCode();
+
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            var searchResult = JsonSerializer.Deserialize<JiraSearchResponse>(content, _jsonOptions);
+
+            return searchResult?.Issues?.Select(MapToJiraTicket) ?? Enumerable.Empty<JiraTicket>();
+        }
+        catch (HttpRequestException ex) when (ex.Message.Contains("410") || ex.Message.Contains("Gone"))
+        {
+            _logger.LogWarning(ex, "API version {Version} not available, trying API v2 as fallback", _settings.ApiVersion);
+            return await SearchTicketsWithFallbackAsync(jql, maxResults, cancellationToken);
+        }
+    }
+
+    private async Task<IEnumerable<JiraTicket>> SearchTicketsWithFallbackAsync(string jql, int maxResults, CancellationToken cancellationToken)
+    {
+        // Criar um HttpClient temporário com API v2
+        using var fallbackClient = new HttpClient();
+        var credentials = Convert.ToBase64String(
+            Encoding.ASCII.GetBytes($"{_settings.Email}:{_settings.ApiToken}"));
+        
+        fallbackClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/rest/api/2/");
+        fallbackClient.DefaultRequestHeaders.Authorization = 
+            new AuthenticationHeaderValue("Basic", credentials);
+        fallbackClient.DefaultRequestHeaders.Accept.Add(
+            new MediaTypeWithQualityHeaderValue("application/json"));
+
+        var searchRequest = new
+        {
+            jql,
+            maxResults,
+            fields = new[] { "summary", "description", "issuetype", "priority", "status", "assignee", "reporter", "created", "updated", "labels", "components", "attachment", "comment" }
+        };
+
+        var json = JsonSerializer.Serialize(searchRequest, _jsonOptions);
+        var httpContent = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var response = await fallbackClient.PostAsync("search", httpContent, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var content = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -299,6 +396,15 @@ public class JiraService : IJiraService
                 Body = ExtractTextFromAdf(c.Body),
                 CreatedAt = c.Created ?? DateTime.MinValue,
                 UpdatedAt = c.Updated
+            }).ToList() ?? [],
+            Attachments = issue.Fields?.Attachments?.Select(a => new JiraAttachment
+            {
+                Id = a.Id ?? string.Empty,
+                FileName = a.FileName ?? string.Empty,
+                ContentType = a.MimeType ?? string.Empty,
+                Size = a.Size ?? 0,
+                Url = a.Content ?? string.Empty,
+                CreatedAt = a.Created ?? DateTime.MinValue
             }).ToList() ?? []
         };
     }
@@ -437,6 +543,7 @@ internal class JiraFieldsResponse
     public List<string>? Labels { get; set; }
     public List<JiraComponentResponse>? Components { get; set; }
     public JiraCommentContainerResponse? Comment { get; set; }
+    public List<JiraAttachmentResponse>? Attachments { get; set; }
 }
 
 internal class JiraIssueTypeResponse
@@ -477,6 +584,17 @@ internal class JiraCommentResponse
     public object? Body { get; set; }
     public DateTime? Created { get; set; }
     public DateTime? Updated { get; set; }
+}
+
+internal class JiraAttachmentResponse
+{
+    public string? Id { get; set; }
+    public string? FileName { get; set; }
+    public string? MimeType { get; set; }
+    public long? Size { get; set; }
+    public string? Content { get; set; }
+    public DateTime? Created { get; set; }
+    public JiraUserResponse? Author { get; set; }
 }
 
 internal class JiraSearchResponse

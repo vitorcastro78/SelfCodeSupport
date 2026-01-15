@@ -13,14 +13,72 @@ namespace SelfCodeSupport.API.Controllers;
 public class WorkflowController : ControllerBase
 {
     private readonly IWorkflowOrchestrator _orchestrator;
+    private readonly ISavedAnalysisService _savedAnalysisService;
     private readonly ILogger<WorkflowController> _logger;
 
     public WorkflowController(
         IWorkflowOrchestrator orchestrator,
+        ISavedAnalysisService savedAnalysisService,
         ILogger<WorkflowController> logger)
     {
         _orchestrator = orchestrator;
+        _savedAnalysisService = savedAnalysisService;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Cria um registro de workflow para um ticket sem iniciar a análise
+    /// </summary>
+    /// <param name="ticketId">ID do ticket JIRA (ex: PROJ-1234)</param>
+    /// <param name="cancellationToken">Token de cancelamento</param>
+    /// <returns>Workflow criado com status pending</returns>
+    /// <response code="200">Workflow criado com sucesso</response>
+    /// <response code="400">ID do ticket inválido</response>
+    /// <response code="404">Ticket não encontrado no JIRA</response>
+    /// <response code="500">Erro interno ao criar workflow</response>
+    [HttpPost("create/{ticketId}")]
+    [ProducesResponseType(typeof(WorkflowResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<WorkflowResult>> CreateWorkflow(
+        string ticketId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(ticketId))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid ticket ID",
+                Detail = "JIRA ticket ID is required"
+            });
+        }
+
+        _logger.LogInformation("Creating workflow for ticket {TicketId}", ticketId);
+
+        try
+        {
+            var result = await _orchestrator.CreateWorkflowAsync(ticketId, cancellationToken);
+            return Ok(result);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Could not fetch ticket"))
+        {
+            _logger.LogError(ex, "Ticket {TicketId} not found in JIRA", ticketId);
+            return NotFound(new ProblemDetails
+            {
+                Title = "Ticket not found",
+                Detail = $"Ticket {ticketId} was not found in JIRA"
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating workflow for ticket {TicketId}", ticketId);
+            return StatusCode(500, new ProblemDetails
+            {
+                Title = "Error creating workflow",
+                Detail = ex.Message
+            });
+        }
     }
 
     /// <summary>
@@ -343,6 +401,250 @@ public class WorkflowController : ControllerBase
 
         return Ok(response);
     }
+
+    /// <summary>
+    /// Envia a análise para o JIRA após revisão/modificação no frontend
+    /// </summary>
+    /// <param name="ticketId">ID do ticket JIRA</param>
+    /// <param name="request">Comentário da análise (pode ser modificado pelo frontend)</param>
+    /// <param name="cancellationToken">Token de cancelamento</param>
+    /// <returns>Status da operação</returns>
+    [HttpPost("send-analysis/{ticketId}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> SendAnalysisToJira(
+        string ticketId,
+        [FromBody] SendAnalysisRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(ticketId))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid ticket ID",
+                Detail = "JIRA ticket ID is required"
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Comment))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid comment",
+                Detail = "Analysis comment is required"
+            });
+        }
+
+        _logger.LogInformation("Sending analysis to JIRA for ticket {TicketId}", ticketId);
+
+        try
+        {
+            await _orchestrator.SendAnalysisToJiraAsync(ticketId, request.Comment, cancellationToken);
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error sending analysis to JIRA for ticket {TicketId}", ticketId);
+            return StatusCode(500, new ProblemDetails
+            {
+                Title = "Error sending analysis",
+                Detail = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Salva a análise realizada para um ticket (permite decidir depois se envia para JIRA ou implementa)
+    /// </summary>
+    /// <param name="ticketId">ID do ticket JIRA</param>
+    /// <param name="request">Request com análise e notas opcionais</param>
+    /// <param name="cancellationToken">Token de cancelamento</param>
+    /// <returns>Análise salva</returns>
+    [HttpPost("save-analysis/{ticketId}")]
+    [ProducesResponseType(typeof(SavedAnalysis), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<SavedAnalysis>> SaveAnalysis(
+        string ticketId,
+        [FromBody] SaveAnalysisRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(ticketId))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid ticket ID",
+                Detail = "JIRA ticket ID is required"
+            });
+        }
+
+        if (request.Analysis == null)
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid request",
+                Detail = "Analysis is required"
+            });
+        }
+
+        _logger.LogInformation("Saving analysis for ticket {TicketId}", ticketId);
+
+        try
+        {
+            var savedAnalysis = await _savedAnalysisService.SaveAnalysisAsync(
+                ticketId, 
+                request.Analysis, 
+                cancellationToken);
+
+            // Atualizar notas se fornecidas
+            if (!string.IsNullOrWhiteSpace(request.Notes))
+            {
+                savedAnalysis.Notes = request.Notes;
+                // Re-save with notes
+                var filePath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "SelfCodeSupport",
+                    "saved-analyses",
+                    $"{savedAnalysis.Id}.json");
+                
+                var json = System.Text.Json.JsonSerializer.Serialize(savedAnalysis, new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+                });
+                await System.IO.File.WriteAllTextAsync(filePath, json, cancellationToken);
+            }
+
+            return Ok(savedAnalysis);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error saving analysis for ticket {TicketId}", ticketId);
+            return StatusCode(500, new ProblemDetails
+            {
+                Title = "Error saving analysis",
+                Detail = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
+    /// Obtém todas as análises salvas para um ticket
+    /// </summary>
+    /// <param name="ticketId">ID do ticket JIRA</param>
+    /// <param name="cancellationToken">Token de cancelamento</param>
+    /// <returns>Lista de análises salvas</returns>
+    [HttpGet("saved-analyses/{ticketId}")]
+    [ProducesResponseType(typeof(List<SavedAnalysis>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<List<SavedAnalysis>>> GetSavedAnalyses(
+        string ticketId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(ticketId))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid ticket ID",
+                Detail = "JIRA ticket ID is required"
+            });
+        }
+
+        var savedAnalyses = await _savedAnalysisService.GetSavedAnalysesAsync(ticketId, cancellationToken);
+        return Ok(savedAnalyses);
+    }
+
+    /// <summary>
+    /// Obtém uma análise salva específica por ID
+    /// </summary>
+    /// <param name="analysisId">ID da análise salva</param>
+    /// <param name="cancellationToken">Token de cancelamento</param>
+    /// <returns>Análise salva</returns>
+    [HttpGet("saved-analyses/by-id/{analysisId}")]
+    [ProducesResponseType(typeof(SavedAnalysis), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<SavedAnalysis>> GetSavedAnalysis(
+        string analysisId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(analysisId))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid analysis ID",
+                Detail = "Analysis ID is required"
+            });
+        }
+
+        var savedAnalysis = await _savedAnalysisService.GetSavedAnalysisAsync(analysisId, cancellationToken);
+        
+        if (savedAnalysis == null)
+        {
+            return NotFound(new ProblemDetails
+            {
+                Title = "Analysis not found",
+                Detail = $"Saved analysis with ID {analysisId} was not found"
+            });
+        }
+
+        return Ok(savedAnalysis);
+    }
+
+    /// <summary>
+    /// Obtém todas as análises salvas (de todos os tickets)
+    /// </summary>
+    /// <param name="limit">Número máximo de resultados (padrão: 50)</param>
+    /// <param name="cancellationToken">Token de cancelamento</param>
+    /// <returns>Lista de análises salvas</returns>
+    [HttpGet("saved-analyses")]
+    [ProducesResponseType(typeof(List<SavedAnalysis>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<SavedAnalysis>>> GetAllSavedAnalyses(
+        [FromQuery] int limit = 50,
+        CancellationToken cancellationToken = default)
+    {
+        var savedAnalyses = await _savedAnalysisService.GetAllSavedAnalysesAsync(limit, cancellationToken);
+        return Ok(savedAnalyses);
+    }
+
+    /// <summary>
+    /// Deleta uma análise salva
+    /// </summary>
+    /// <param name="analysisId">ID da análise salva</param>
+    /// <param name="cancellationToken">Token de cancelamento</param>
+    [HttpDelete("saved-analyses/{analysisId}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> DeleteSavedAnalysis(
+        string analysisId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(analysisId))
+        {
+            return BadRequest(new ProblemDetails
+            {
+                Title = "Invalid analysis ID",
+                Detail = "Analysis ID is required"
+            });
+        }
+
+        try
+        {
+            await _savedAnalysisService.DeleteSavedAnalysisAsync(analysisId, cancellationToken);
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deleting saved analysis {AnalysisId}", analysisId);
+            return StatusCode(500, new ProblemDetails
+            {
+                Title = "Error deleting analysis",
+                Detail = ex.Message
+            });
+        }
+    }
 }
 
 /// <summary>
@@ -387,4 +689,31 @@ public class WorkflowMetricsResponse
     public double SuccessRate { get; set; }
     public int AverageImplementationTime { get; set; }
     public int PrsCreatedToday { get; set; }
+}
+
+/// <summary>
+/// Request para enviar análise ao JIRA
+/// </summary>
+public class SendAnalysisRequest
+{
+    /// <summary>
+    /// Comentário formatado da análise (pode ser modificado pelo frontend)
+    /// </summary>
+    public string Comment { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Request para salvar análise
+/// </summary>
+public class SaveAnalysisRequest
+{
+    /// <summary>
+    /// Análise a ser salva
+    /// </summary>
+    public AnalysisResult Analysis { get; set; } = new();
+
+    /// <summary>
+    /// Notas opcionais sobre a análise
+    /// </summary>
+    public string? Notes { get; set; }
 }

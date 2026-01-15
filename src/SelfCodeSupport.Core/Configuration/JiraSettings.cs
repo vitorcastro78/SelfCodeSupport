@@ -36,6 +36,11 @@ public class JiraSettings
     /// Campos customizados do JIRA
     /// </summary>
     public JiraCustomFields CustomFields { get; set; } = new();
+
+    /// <summary>
+    /// Versão da API do JIRA a ser usada (2, 3, ou "latest")
+    /// </summary>
+    public string ApiVersion { get; set; } = "3";
 }
 
 /// <summary>
