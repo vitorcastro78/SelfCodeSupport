@@ -74,34 +74,34 @@ public class AnalysisResult
     {
         var sb = new System.Text.StringBuilder();
 
-        sb.AppendLine("## 🔍 ANÁLISE TÉCNICA");
+        sb.AppendLine("## 🔍 TECHNICAL ANALYSIS");
         sb.AppendLine();
-        sb.AppendLine($"**Data da Análise:** {AnalyzedAt:dd/MM/yyyy HH:mm} UTC");
-        sb.AppendLine($"**Complexidade:** {Complexity}");
-        sb.AppendLine($"**Estimativa:** ~{EstimatedEffortHours}h");
+        sb.AppendLine($"**Analysis Date:** {AnalyzedAt:MM/dd/yyyy HH:mm} UTC");
+        sb.AppendLine($"**Complexity:** {Complexity}");
+        sb.AppendLine($"**Estimate:** ~{EstimatedEffortHours}h");
         sb.AppendLine();
 
-        sb.AppendLine("### 📁 Arquivos Identificados");
+        sb.AppendLine("### 📁 Identified Files");
         foreach (var file in AffectedFiles)
         {
             sb.AppendLine($"- `{file.Path}` - {file.ChangeType}");
         }
         sb.AppendLine();
 
-        sb.AppendLine("### 🔧 Mudanças Necessárias");
+        sb.AppendLine("### 🔧 Required Changes");
         foreach (var change in RequiredChanges)
         {
             sb.AppendLine($"- **{change.Component}**: {change.Description}");
         }
         sb.AppendLine();
 
-        sb.AppendLine("### ⚠️ Impactos e Riscos");
+        sb.AppendLine("### ⚠️ Impacts and Risks");
         if (TechnicalImpact.HasBreakingChanges)
-            sb.AppendLine("- ⚠️ **BREAKING CHANGE** detectado");
+            sb.AppendLine("- ⚠️ **BREAKING CHANGE** detected");
         if (TechnicalImpact.RequiresMigration)
-            sb.AppendLine("- 🗄️ Requer migration de banco de dados");
+            sb.AppendLine("- 🗄️ Database migration required");
         if (TechnicalImpact.NewDependencies.Count > 0)
-            sb.AppendLine($"- 📦 Novas dependências: {string.Join(", ", TechnicalImpact.NewDependencies)}");
+            sb.AppendLine($"- 📦 New dependencies: {string.Join(", ", TechnicalImpact.NewDependencies)}");
 
         foreach (var risk in Risks)
         {
@@ -111,7 +111,7 @@ public class AnalysisResult
 
         if (Opportunities.Count > 0)
         {
-            sb.AppendLine("### ✨ Oportunidades de Melhoria");
+            sb.AppendLine("### ✨ Improvement Opportunities");
             foreach (var opp in Opportunities)
             {
                 sb.AppendLine($"- {opp.Description}");
@@ -119,7 +119,7 @@ public class AnalysisResult
             sb.AppendLine();
         }
 
-        sb.AppendLine("### 📋 Plano de Implementação");
+        sb.AppendLine("### 📋 Implementation Plan");
         for (int i = 0; i < ImplementationPlan.Count; i++)
         {
             var step = ImplementationPlan[i];
@@ -127,7 +127,7 @@ public class AnalysisResult
         }
         sb.AppendLine();
 
-        sb.AppendLine("### ✅ Critérios de Validação");
+        sb.AppendLine("### ✅ Validation Criteria");
         foreach (var criteria in ValidationCriteria)
         {
             sb.AppendLine($"- [ ] {criteria.Description}");
@@ -135,8 +135,8 @@ public class AnalysisResult
         sb.AppendLine();
 
         sb.AppendLine("---");
-        sb.AppendLine("⏸️ **Aguardando aprovação para prosseguir com a implementação.**");
-        sb.AppendLine("Digite **\"APROVADO\"** para continuar ou **\"REVISAR\"** para ajustes.");
+        sb.AppendLine("⏸️ **Awaiting approval to proceed with implementation.**");
+        sb.AppendLine("Type **\"APPROVED\"** to continue or **\"REVIEW\"** for adjustments.");
 
         return sb.ToString();
     }

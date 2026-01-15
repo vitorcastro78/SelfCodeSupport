@@ -8,6 +8,14 @@ namespace SelfCodeSupport.Core.Interfaces;
 public interface IWorkflowOrchestrator
 {
     /// <summary>
+    /// Cria um registro de workflow para um ticket sem iniciar a análise
+    /// </summary>
+    /// <param name="ticketId">ID do ticket JIRA</param>
+    /// <param name="cancellationToken">Token de cancelamento</param>
+    /// <returns>Workflow criado com status pending</returns>
+    Task<WorkflowResult> CreateWorkflowAsync(string ticketId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Inicia o fluxo completo de desenvolvimento para um ticket
     /// </summary>
     /// <param name="ticketId">ID do ticket JIRA</param>
@@ -63,6 +71,14 @@ public interface IWorkflowOrchestrator
     Task<IEnumerable<WorkflowSummary>> GetWorkflowHistoryAsync(int limit = 20);
 
     /// <summary>
+    /// Envia a análise para o JIRA (após revisão/modificação no frontend)
+    /// </summary>
+    /// <param name="ticketId">ID do ticket JIRA</param>
+    /// <param name="analysisComment">Comentário formatado da análise (pode ser modificado pelo frontend)</param>
+    /// <param name="cancellationToken">Token de cancelamento</param>
+    Task SendAnalysisToJiraAsync(string ticketId, string analysisComment, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Evento disparado quando a análise é concluída
     /// </summary>
     event EventHandler<AnalysisCompletedEventArgs>? AnalysisCompleted;
@@ -102,6 +118,190 @@ public class WorkflowResult
 }
 
 /// <summary>
+/// DTO para análise técnica no formato esperado pelo frontend
+/// </summary>
+public class TechnicalAnalysisDto
+{
+    /// <summary>
+    /// Data/hora em que a análise foi realizada
+    /// </summary>
+    public DateTime AnalyzedAt { get; set; }
+    /// <summary>
+    /// Status atual da análise
+    /// </summary>
+    public string Status { get; set; } = string.Empty;
+    /// <summary>
+    /// Arquivos identificados que precisam ser modificados
+    /// </summary>
+    public List<AffectedFileDto> AffectedFiles { get; set; } = [];
+    /// <summary>
+    /// Mudanças necessárias identificadas por componente
+    /// </summary>
+    public List<RequiredChangeDto> RequiredChanges { get; set; } = [];
+    /// <summary>
+    /// Impactos técnicos da mudança
+    /// </summary>
+    public TechnicalImpactDto TechnicalImpact { get; set; } = new();
+    /// <summary>
+    /// Riscos identificados
+    /// </summary>
+    public List<RiskDto> Risks { get; set; } = [];
+    /// <summary>
+    /// Oportunidades de melhoria identificadas
+    /// </summary>
+    public List<ImprovementDto> Improvements { get; set; } = [];
+    /// <summary>
+    /// Plano de implementação passo a passo
+    /// </summary>
+    public List<ImplementationPlanItemDto> ImplementationPlan { get; set; } = [];
+    /// <summary>
+    /// Critérios de validação para garantir qualidade
+    /// </summary>
+    public List<ValidationCriteriaDto> ValidationCriteria { get; set; } = [];
+    /// <summary>
+    /// Complexidade da implementação
+    /// </summary>
+    public string Complexity { get; set; } = string.Empty;
+    /// <summary>
+    /// Estimativa de esforço total formatada
+    /// </summary>
+    public string EstimatedEffort { get; set; } = string.Empty;
+    /// <summary>
+    /// Estimativa de esforço total em horas
+    /// </summary>
+    public int EstimatedEffortHours { get; set; }
+}
+
+public class AffectedFileDto
+{
+    public string Path { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    /// <summary>
+    /// Descrição detalhada das mudanças necessárias neste arquivo
+    /// </summary>
+    public string Description { get; set; } = string.Empty;
+    /// <summary>
+    /// Lista de métodos/funções que serão afetados pela mudança
+    /// </summary>
+    public List<string> MethodsAffected { get; set; } = [];
+}
+
+public class RiskDto
+{
+    public string Severity { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    /// <summary>
+    /// Estratégia de mitigação do risco
+    /// </summary>
+    public string Mitigation { get; set; } = string.Empty;
+}
+
+public class ImprovementDto
+{
+    public string Description { get; set; } = string.Empty;
+    /// <summary>
+    /// Tipo de melhoria (Refactoring, Performance, Security, etc.)
+    /// </summary>
+    public string Type { get; set; } = string.Empty;
+    /// <summary>
+    /// Esforço estimado em horas para implementar a melhoria
+    /// </summary>
+    public int EstimatedEffortHours { get; set; }
+}
+
+public class ImplementationPlanItemDto
+{
+    public int Order { get; set; }
+    public string Description { get; set; } = string.Empty;
+    public bool Completed { get; set; }
+    /// <summary>
+    /// Lista de arquivos que serão modificados neste passo
+    /// </summary>
+    public List<string> Files { get; set; } = [];
+    /// <summary>
+    /// Tempo estimado em minutos para completar este passo
+    /// </summary>
+    public int EstimatedMinutes { get; set; }
+    /// <summary>
+    /// Tempo estimado formatado (ex: "30 minutos", "1 hora")
+    /// </summary>
+    public string EstimatedTime { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Impacto técnico da mudança - informações críticas para guiar o programador
+/// </summary>
+public class TechnicalImpactDto
+{
+    /// <summary>
+    /// Indica se a mudança quebra compatibilidade com código existente
+    /// </summary>
+    public bool HasBreakingChanges { get; set; }
+    /// <summary>
+    /// Indica se é necessária migração de banco de dados
+    /// </summary>
+    public bool RequiresMigration { get; set; }
+    /// <summary>
+    /// Indica se a mudança afeta performance do sistema
+    /// </summary>
+    public bool AffectsPerformance { get; set; }
+    /// <summary>
+    /// Indica se há implicações de segurança
+    /// </summary>
+    public bool HasSecurityImplications { get; set; }
+    /// <summary>
+    /// Lista de novas dependências (pacotes NuGet, bibliotecas) necessárias
+    /// </summary>
+    public List<string> NewDependencies { get; set; } = [];
+    /// <summary>
+    /// Lista de endpoints da API que serão afetados
+    /// </summary>
+    public List<string> AffectedEndpoints { get; set; } = [];
+    /// <summary>
+    /// Lista de serviços que serão afetados
+    /// </summary>
+    public List<string> AffectedServices { get; set; } = [];
+}
+
+/// <summary>
+/// Mudança necessária identificada por componente
+/// </summary>
+public class RequiredChangeDto
+{
+    /// <summary>
+    /// Nome do componente que precisa ser modificado
+    /// </summary>
+    public string Component { get; set; } = string.Empty;
+    /// <summary>
+    /// Descrição detalhada da mudança necessária
+    /// </summary>
+    public string Description { get; set; } = string.Empty;
+    /// <summary>
+    /// Categoria do componente (Controller, Service, Repository, etc.)
+    /// </summary>
+    public string Category { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Critério de validação para garantir qualidade da implementação
+/// </summary>
+public class ValidationCriteriaDto
+{
+    /// <summary>
+    /// Descrição do critério de validação
+    /// </summary>
+    public string Description { get; set; } = string.Empty;
+    /// <summary>
+    /// Tipo de validação (UnitTest, IntegrationTest, ManualTest, etc.)
+    /// </summary>
+    public string Type { get; set; } = string.Empty;
+    /// <summary>
+    /// Indica se o critério pode ser automatizado
+    /// </summary>
+    public bool IsAutomatable { get; set; }
+}
+
+/// <summary>
 /// Status do workflow
 /// </summary>
 public class WorkflowStatus
@@ -112,6 +312,10 @@ public class WorkflowStatus
     public string Message { get; set; } = string.Empty;
     public int ProgressPercentage { get; set; }
     public DateTime LastUpdated { get; set; }
+    /// <summary>
+    /// Análise técnica quando disponível (após análise ser concluída)
+    /// </summary>
+    public TechnicalAnalysisDto? Analysis { get; set; }
 }
 
 /// <summary>

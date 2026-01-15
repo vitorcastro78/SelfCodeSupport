@@ -15,6 +15,12 @@ public class HealthController : ControllerBase
     private readonly IAnthropicService _anthropicService;
     private readonly IPullRequestService _pullRequestService;
     private readonly ILogger<HealthController> _logger;
+    
+    // Cache para health checks (evita requisições repetidas)
+    private static DetailedHealthResponse? _cachedHealthResponse;
+    private static DateTime _lastHealthCheck = DateTime.MinValue;
+    private static readonly TimeSpan HealthCheckCacheDuration = TimeSpan.FromSeconds(60); // Cache por 60 segundos
+    private static readonly object _healthCheckLock = new();
 
     public HealthController(
         IJiraService jiraService,
@@ -45,11 +51,24 @@ public class HealthController : ControllerBase
 
     /// <summary>
     /// Verifica a saúde detalhada incluindo todas as integrações
+    /// Usa cache de 60 segundos para evitar requisições repetidas e economizar créditos
     /// </summary>
     [HttpGet("detailed")]
     [ProducesResponseType(typeof(DetailedHealthResponse), StatusCodes.Status200OK)]
     public async Task<ActionResult<DetailedHealthResponse>> GetDetailedHealth(CancellationToken cancellationToken)
     {
+        // Verificar se há cache válido
+        lock (_healthCheckLock)
+        {
+            if (_cachedHealthResponse != null && 
+                DateTime.UtcNow - _lastHealthCheck < HealthCheckCacheDuration)
+            {
+                _logger.LogDebug("Returning cached health check result");
+                return Ok(_cachedHealthResponse);
+            }
+        }
+
+        // Cache expirado ou não existe - fazer verificação real
         var response = new DetailedHealthResponse
         {
             Timestamp = DateTime.UtcNow,
@@ -75,7 +94,7 @@ public class HealthController : ControllerBase
             };
         }
 
-        // Verificar Anthropic
+        // Verificar Anthropic (mais caro - só verifica se necessário)
         try
         {
             response.Integrations["Anthropic"] = new IntegrationHealth
@@ -118,6 +137,13 @@ public class HealthController : ControllerBase
             : response.Integrations.Values.Any(i => i.IsHealthy) 
                 ? "Degraded" 
                 : "Unhealthy";
+
+        // Atualizar cache
+        lock (_healthCheckLock)
+        {
+            _cachedHealthResponse = response;
+            _lastHealthCheck = DateTime.UtcNow;
+        }
 
         return Ok(response);
     }

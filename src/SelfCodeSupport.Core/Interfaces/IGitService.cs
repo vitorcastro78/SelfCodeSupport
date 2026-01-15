@@ -129,6 +129,12 @@ public interface IGitService
     /// </summary>
     /// <param name="cancellationToken">Token de cancelamento</param>
     Task DiscardChangesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Muda o repositório ativo (útil para workspaces temporários)
+    /// </summary>
+    /// <param name="repositoryPath">Caminho do novo repositório</param>
+    void SwitchRepository(string repositoryPath);
 }
 
 /// <summary>

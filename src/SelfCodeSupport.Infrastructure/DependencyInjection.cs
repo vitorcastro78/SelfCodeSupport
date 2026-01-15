@@ -47,16 +47,15 @@ public static class DependencyInjection
             });
 
         // Database - SQLite
-        var dbPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "SelfCodeSupport",
-            "settings.db");
+        // Usar pasta Data no diretório base da aplicação (onde a API está rodando)
+        var baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+        var dataDirectory = Path.Combine(baseDirectory, "Data");
+        var dbPath = Path.Combine(dataDirectory, "settings.db");
 
-        // Garantir que o diretório existe
-        var dbDirectory = Path.GetDirectoryName(dbPath);
-        if (!string.IsNullOrEmpty(dbDirectory) && !Directory.Exists(dbDirectory))
+        // Garantir que o diretório Data existe
+        if (!Directory.Exists(dataDirectory))
         {
-            Directory.CreateDirectory(dbDirectory);
+            Directory.CreateDirectory(dataDirectory);
         }
 
         services.AddDbContext<ApplicationDbContext>(options =>
@@ -65,6 +64,14 @@ public static class DependencyInjection
         // Serviços
         services.AddScoped<ISettingsService, SettingsService>();
         services.AddSingleton<IGitService, GitService>();
+        services.AddSingleton<ICodeAnalysisService, CodeAnalysisService>();
+        services.AddScoped<WorkspaceManager>(); // Scoped para limpar após cada análise
+        services.AddScoped<IAnalysisCacheService, AnalysisCacheService>(); // Changed to Scoped to use DbContext
+        services.AddScoped<ISavedAnalysisService, SavedAnalysisService>(); // Changed to Scoped to use DbContext
+        services.AddSingleton<ContextOptimizer>();
+        
+        // WorkflowProgressNotifier será registrado no Program.cs do API
+        
         services.AddSingleton<IWorkflowOrchestrator, WorkflowOrchestrator>();
 
         return services;

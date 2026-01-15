@@ -100,23 +100,23 @@ public class ImplementationResult
     {
         var sb = new System.Text.StringBuilder();
 
-        sb.AppendLine("## 🚀 IMPLEMENTAÇÃO CONCLUÍDA");
+        sb.AppendLine("## 🚀 IMPLEMENTATION COMPLETED");
         sb.AppendLine();
         sb.AppendLine($"**Branch:** `{BranchName}`");
         sb.AppendLine($"**Status:** {Status}");
-        sb.AppendLine($"**Duração:** {Duration?.TotalMinutes:F0} minutos");
+        sb.AppendLine($"**Duration:** {Duration?.TotalMinutes:F0} minutes");
         sb.AppendLine();
 
-        sb.AppendLine("### 📝 Alterações");
-        sb.AppendLine($"- Arquivos criados: {CreatedFiles.Count}");
-        sb.AppendLine($"- Arquivos modificados: {ModifiedFiles.Count}");
-        sb.AppendLine($"- Arquivos deletados: {DeletedFiles.Count}");
+        sb.AppendLine("### 📝 Changes");
+        sb.AppendLine($"- Files created: {CreatedFiles.Count}");
+        sb.AppendLine($"- Files modified: {ModifiedFiles.Count}");
+        sb.AppendLine($"- Files deleted: {DeletedFiles.Count}");
         sb.AppendLine();
 
         if (BuildResult != null)
         {
             sb.AppendLine("### 🔨 Build");
-            sb.AppendLine($"- Status: {(BuildResult.IsSuccess ? "✅ Sucesso" : "❌ Falhou")}");
+            sb.AppendLine($"- Status: {(BuildResult.IsSuccess ? "✅ Success" : "❌ Failed")}");
             if (!BuildResult.IsSuccess)
             {
                 foreach (var error in BuildResult.Errors)
@@ -129,14 +129,14 @@ public class ImplementationResult
 
         if (TestResult != null)
         {
-            sb.AppendLine("### 🧪 Testes");
+            sb.AppendLine("### 🧪 Tests");
             sb.AppendLine($"- Total: {TestResult.TotalTests}");
-            sb.AppendLine($"- Passaram: {TestResult.PassedTests}");
-            sb.AppendLine($"- Falharam: {TestResult.FailedTests}");
-            sb.AppendLine($"- Ignorados: {TestResult.SkippedTests}");
+            sb.AppendLine($"- Passed: {TestResult.PassedTests}");
+            sb.AppendLine($"- Failed: {TestResult.FailedTests}");
+            sb.AppendLine($"- Skipped: {TestResult.SkippedTests}");
             if (TestResult.CodeCoverage.HasValue)
             {
-                sb.AppendLine($"- Cobertura: {TestResult.CodeCoverage:P1}");
+                sb.AppendLine($"- Coverage: {TestResult.CodeCoverage:P1}");
             }
             sb.AppendLine();
         }
@@ -150,7 +150,7 @@ public class ImplementationResult
 
         if (Errors.Count > 0)
         {
-            sb.AppendLine("### ❌ Erros");
+            sb.AppendLine("### ❌ Errors");
             foreach (var error in Errors)
             {
                 sb.AppendLine($"- {error.Message}");

@@ -48,6 +48,21 @@ public class AnthropicSettings
     public int MaxRetries { get; set; } = 3;
 
     /// <summary>
+    /// Modelo alternativo mais barato para análises simples (opcional)
+    /// </summary>
+    public string? CheaperModel { get; set; }
+
+    /// <summary>
+    /// Habilitar cache de análises para economizar créditos
+    /// </summary>
+    public bool EnableAnalysisCache { get; set; } = true;
+
+    /// <summary>
+    /// Tamanho máximo do contexto em caracteres (para otimização)
+    /// </summary>
+    public int MaxContextSize { get; set; } = 30000;
+
+    /// <summary>
     /// Prompts customizados para diferentes operações
     /// </summary>
     public AnthropicPrompts Prompts { get; set; } = new();
@@ -61,96 +76,96 @@ public class AnthropicPrompts
     /// <summary>
     /// System prompt base para análise de código
     /// </summary>
-    public string SystemPrompt { get; set; } = @"Você é um desenvolvedor sênior especialista em C# e .NET. 
-Você analisa código com precisão, identifica problemas e sugere soluções seguindo as melhores práticas.
-Sempre considere: Clean Code, SOLID, padrões de projeto, segurança e performance.";
+    public string SystemPrompt { get; set; } = @"You are a senior developer expert in C# and .NET. 
+You analyze code accurately, identify issues and suggest solutions following best practices.
+Always consider: Clean Code, SOLID principles, design patterns, security and performance.";
 
     /// <summary>
     /// Template para análise de ticket
     /// </summary>
-    public string AnalysisPromptTemplate { get; set; } = @"Analise o seguinte ticket JIRA e o código relacionado:
+    public string AnalysisPromptTemplate { get; set; } = @"Analyze the following JIRA ticket and related code:
 
 ## Ticket
 ID: {ticketId}
-Título: {title}
-Descrição: {description}
-Tipo: {type}
+Title: {title}
+Description: {description}
+Type: {type}
 
-## Código Atual
+## Current Code
 {codeContext}
 
-## Tarefa
-1. Identifique todos os arquivos que precisam ser modificados
-2. Liste as mudanças necessárias em cada arquivo
-3. Identifique riscos e impactos técnicos
-4. Sugira oportunidades de melhoria
-5. Crie um plano de implementação passo a passo
-6. Defina critérios de validação
+## Task
+1. Identify all files that need to be modified
+2. List the necessary changes in each file
+3. Identify risks and technical impacts
+4. Suggest improvement opportunities
+5. Create a step-by-step implementation plan
+6. Define validation criteria
 
-Forneça a análise em formato JSON estruturado.";
+Provide the analysis in structured JSON format.";
 
     /// <summary>
     /// Template para geração de código
     /// </summary>
-    public string CodeGenerationPromptTemplate { get; set; } = @"Implemente a seguinte solução em C#:
+    public string CodeGenerationPromptTemplate { get; set; } = @"Implement the following solution in C#:
 
-## Contexto
+## Context
 {context}
 
-## Requisitos
+## Requirements
 {requirements}
 
-## Código Existente
+## Existing Code
 {existingCode}
 
-## Instruções
-- Siga os padrões do código existente
-- Implemente Clean Code e SOLID
-- Adicione tratamento de erros apropriado
-- Inclua logging onde necessário
-- Adicione XML documentation
-- Não inclua código desnecessário
+## Instructions
+- Follow existing code patterns
+- Implement Clean Code and SOLID principles
+- Add appropriate error handling
+- Include logging where necessary
+- Add XML documentation
+- Do not include unnecessary code
 
-Forneça apenas o código implementado, sem explicações adicionais.";
+Provide only the implemented code, without additional explanations.";
 
     /// <summary>
     /// Template para geração de testes
     /// </summary>
-    public string TestGenerationPromptTemplate { get; set; } = @"Crie testes unitários para o seguinte código:
+    public string TestGenerationPromptTemplate { get; set; } = @"Create unit tests for the following code:
 
-## Código a Testar
+## Code to Test
 {code}
 
-## Framework de Testes
+## Test Framework
 - xUnit
-- Moq para mocks
-- FluentAssertions para assertions
+- Moq for mocks
+- FluentAssertions for assertions
 
-## Instruções
-- Cubra casos de sucesso e falha
-- Teste edge cases
-- Use nomenclatura: MethodName_Scenario_ExpectedResult
-- Organize com Arrange/Act/Assert
+## Instructions
+- Cover success and failure cases
+- Test edge cases
+- Use naming: MethodName_Scenario_ExpectedResult
+- Organize with Arrange/Act/Assert
 
-Forneça apenas o código dos testes.";
+Provide only the test code.";
 
     /// <summary>
     /// Template para revisão de código
     /// </summary>
-    public string CodeReviewPromptTemplate { get; set; } = @"Revise o seguinte código e identifique:
+    public string CodeReviewPromptTemplate { get; set; } = @"Review the following code and identify:
 
-## Código
+## Code
 {code}
 
-## Checklist de Revisão
-1. Bugs ou erros lógicos
-2. Vulnerabilidades de segurança
-3. Problemas de performance
-4. Violações de Clean Code/SOLID
-5. Falta de tratamento de erros
-6. Código duplicado
-7. Problemas de nomenclatura
-8. Falta de documentação
+## Review Checklist
+1. Bugs or logical errors
+2. Security vulnerabilities
+3. Performance issues
+4. Clean Code/SOLID violations
+5. Missing error handling
+6. Duplicate code
+7. Naming issues
+8. Missing documentation
 
-Forneça feedback estruturado com severidade (crítico, alto, médio, baixo) e sugestões de correção.";
+Provide structured feedback with severity (Critical, High, Medium, Low) and correction suggestions.";
 }

@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using SelfCodeSupport.API.Hubs;
 using SelfCodeSupport.Infrastructure;
 using SelfCodeSupport.Infrastructure.Data;
 
@@ -44,6 +45,12 @@ builder.Services.AddSwaggerGen(options =>
         options.IncludeXmlComments(xmlPath);
     }
 });
+
+// Add SignalR
+builder.Services.AddSignalR();
+
+// Add WorkflowProgressNotifier (depends on SignalR)
+builder.Services.AddSingleton<SelfCodeSupport.API.Services.WorkflowProgressNotifier>();
 
 // Add Infrastructure services
 builder.Services.AddInfrastructureServices(builder.Configuration);
@@ -120,6 +127,9 @@ if (!app.Environment.IsDevelopment())
 
 app.UseAuthorization();
 app.MapControllers();
+
+// Map SignalR Hub
+app.MapHub<WorkflowHub>("/hubs/workflow");
 
 // Inicializar banco de dados
 using (var scope = app.Services.CreateScope())
